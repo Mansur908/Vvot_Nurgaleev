@@ -1,0 +1,266 @@
+#!/usr/bin/python
+
+import boto3
+import argparse
+import sys
+import os
+import pathlib
+import configparser
+
+try:
+    config = configparser.ConfigParser()
+    config.read(f"{pathlib.Path.home()}/.config/cloudphoto/cloudphotorc")
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ['upload', 'download', 'list', 'delete', 'mksite']:
+
+            session = boto3.session.Session()
+            s3 = session.client(
+                service_name='s3',
+                endpoint_url=config['DEFAULT']['endpoint_url'],
+                aws_access_key_id=config['DEFAULT']['aws_access_key_id'],
+                aws_secret_access_key=config['DEFAULT']['aws_secret_access_key'],
+                region_name=config['DEFAULT']['region']
+            )
+except:
+    sys.exit('The configuration file is incorrect. First you need to execute the init command')
+
+
+def upload():
+    parser = argparse.ArgumentParser(description='', usage='cloudphoto upload [-h] --album ALBUM [--path PATH]')
+    parser.add_argument('upload', metavar='upload', help='command')
+    parser.add_argument('--album', help='album name', required=True)
+    parser.add_argument('--path', help='path to photos directory', required=False, default=pathlib.Path.cwd())
+    args = parser.parse_args()
+
+    for file in os.listdir(args.path):
+        if (file.endswith(".jpg") or file.endswith(".jpeg")):
+            s3.upload_file(os.path.join(args.path, file), config['DEFAULT']['bucket'], f"{args.album}/{file}")
+
+def download():
+    parser = argparse.ArgumentParser(description='', usage='cloudphoto download [-h] --album ALBUM [--path PATH]')
+    parser.add_argument('download', metavar='download', help='command')
+    parser.add_argument('--album', help='album name', required=True)
+    parser.add_argument('--path', help='path to photos directory', required=False, default=pathlib.Path.cwd())
+    args = parser.parse_args()
+
+    d = dict(s3.list_objects(Bucket=config['DEFAULT']['bucket'], Prefix=f"{args.album}/"))
+    if not d.get("Contents"):
+        sys.exit("Album does not exists")
+    for i in d.get("Contents"):
+        try:
+            s3.download_file(config['DEFAULT']['bucket'], i.get('Key'), os.path.join(args.path, i.get('Key').split(sep='/')[1]))
+        except:
+            sys.exit("It is not possible to save files to this directory")
+
+def list():
+    parser = argparse.ArgumentParser(description='', usage='cloudphoto list [-h] [--album ALBUM]')
+    parser.add_argument('list', metavar='list', help='command')
+    parser.add_argument('--album', help='album name', required=False)
+    args = parser.parse_args()
+
+    l = []
+
+    if args.album:
+        d = dict(s3.list_objects(Bucket=config['DEFAULT']['bucket'], Prefix=f"{args.album}/"))
+        if not d.get("Contents"):
+            sys.exit("Album does not exists")
+
+        for i in d.get("Contents"):
+            l.append(i.get('Key').split(sep='/')[1])
+    else:
+        d = dict(s3.list_objects(Bucket=config['DEFAULT']['bucket']))
+        if not d.get("Contents"):
+            sys.exit("Albums does not exists")
+
+        for i in d.get("Contents"):
+            if '/' in i.get('Key'):
+                l.append(i.get('Key').split(sep='/')[0])
+        if len(l) == 0:
+            sys.exit("Albums does not exists")
+
+    for i in set(l):
+        print(i)
+
+def delete():
+    parser = argparse.ArgumentParser(description='', usage='cloudphoto delete [-h] --album ALBUM [--photo PHOTO]')
+    parser.add_argument('delete', metavar='delete', help='command')
+    parser.add_argument('--album', help='album name', required=True)
+    parser.add_argument('--photo', help='path to photos directory', required=False)
+    args = parser.parse_args()
+
+    if args.photo:
+        try:
+            l = []
+            d = dict(s3.list_objects(Bucket=config['DEFAULT']['bucket'], Prefix=f"{args.album}/"))
+            if not d.get("Contents"):
+                sys.exit("Album does not exists")
+            for i in d.get("Contents"):
+                l.append(i.get('Key').split(sep='/')[1])
+            if not args.photo in set(l):
+                sys.exit("Photo name does not exist")
+
+            s3.delete_object(Bucket=config['DEFAULT']['bucket'], Key=f"{args.album}/{args.photo}")
+            print("Succesfuly deleted")
+        except:
+            sys.exit("Photo name does not exist")
+    else:
+        d = dict(s3.list_objects(Bucket=config['DEFAULT']['bucket'], Prefix=f"{args.album}/"))
+        if not d.get("Contents"):
+            sys.exit("Album does not exists")
+
+        for i in d.get("Contents"):
+            s3.delete_object(Bucket=config['DEFAULT']['bucket'], Key=i.get('Key'))
+        print("Successfuly deleted")
+
+def mksite():
+    parser = argparse.ArgumentParser(description='', usage='cloudphoto mksite [-h]')
+    parser.add_argument('mksite', metavar='mksite', help='command')
+    args = parser.parse_args()
+
+    d = dict(s3.list_objects(Bucket=config['DEFAULT']['bucket']))
+    arr = []
+    if not d.get("Contents"):
+        sys.exit("Albums does not exists")
+    for i in d.get("Contents"):
+        if "/" in i.get("Key"):
+            arr.append(i.get("Key").split("/")[0])
+
+    count = 1
+    d = {}
+    for i in set(arr):
+        d.update({count: i})
+        count += 1
+
+    website_configuration = {
+        "IndexDocument": {"Suffix": "index.html"},
+        "ErrorDocument": {"Key": "error.html"}
+    }
+
+    s3.put_bucket_website(Bucket=config['DEFAULT']['bucket'], WebsiteConfiguration=website_configuration)
+
+    with open("index.html", "w", encoding="utf-8") as file:
+        file.write("<!doctype html>"+
+                "<html>"+
+                    "<head>"+
+                        "<title>Фотоархив</title>"+
+                        "<meta charset=\"utf-8\">"+
+                    "</head>"+
+                "<body>"+
+                    "<h1>Фотоархив</h1>"+
+                    "<ul>")
+        for i in d.keys():
+            file.write(f"<li><a href=\"album{i}.html\">{d.get(i)}</a></li>")
+        file.write("</ul>"+
+                "</body")
+    file.close()
+
+    s3.upload_file("index.html", config['DEFAULT']['bucket'], "index.html")
+
+    with open("error.html", "w", encoding="utf-8") as file:
+        file.write("<!doctype html>"+
+                    "<html>"+
+                        "<head>"+
+                            "<title>Фотоархив</title>"+
+                        "</head>"+
+                    "<body>"+
+                        "<h1>Ошибка</h1>"+
+                        "<p>Ошибка при доступе к фотоархиву. Вернитесь на <a href=\"index.html\">главную страницу</a> фотоархива.</p>"+
+                    "</body>"+
+                    "</html")
+    file.close()
+    s3.upload_file("error.html", config['DEFAULT']['bucket'], "error.html")
+
+    for album_index in d.keys():
+
+        with open(f"album{album_index}.html", "w", encoding="utf-8") as file:
+            file.write("<!doctype html>"+
+                "<html>"+
+                    "<head>"+
+                        "<link rel=\"stylesheet\" type=\"text/css\" href=\"https://cdnjs.cloudflare.com/ajax/libs/galleria/1.6.1/themes/classic/galleria.classic.min.css\" />"+
+                        "<style>"+
+                            ".galleria{ width: 960px; height: 540px; background: #000 }"+
+                        "</style>"+
+                        "<script src=\"https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js\"></script>"+
+                        "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/galleria/1.6.1/galleria.min.js\"></script>"+
+                        "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/galleria/1.6.1/themes/classic/galleria.classic.min.js\"></script>"+
+                    "</head>"+
+                    "<body>"+
+                        "<div class=\"galleria\">")
+            for i in dict(s3.list_objects(Bucket=config['DEFAULT']['bucket'], Prefix=f"{d.get(album_index)}/")).get('Contents'):
+                file.write(f"<img src=\"https://storage.yandexcloud.net/{config['DEFAULT']['bucket']}/{d.get(album_index)}/{i.get('Key').split('/')[1]}\" data-title=\"{i.get('Key').split('/')[1]}\">")
+            file.write("</div>"+
+                            "<p>Вернуться на <a href=\"index.html\">главную страницу</a> фотоархива</p>"+
+                            "<script>"+
+                                "(function() {"+
+                                    "Galleria.run('.galleria');"+
+                                "}());"+
+                            "</script>"+
+                        "</body>"+
+                    "</html>")
+        file.close()
+        s3.upload_file(f"album{album_index}.html", config['DEFAULT']['bucket'], f"album{album_index}.html")
+
+    print(f"https://{config['DEFAULT']['bucket']}.website.yandexcloud.net/")
+
+def init():
+    print('Enter aws_access_key_id')
+    aws_access_key_id = input()
+    print('Enter aws_secret_access_key')
+    aws_secret_access_key = input()
+    print('Enter bucket name:')
+    bucket_name = input()
+    if not os.path.exists(f"{pathlib.Path.home()}/.config/cloudphoto"):
+        os.makedirs(f"{pathlib.Path.home()}/.config/cloudphoto")
+    init_file = open(f"{pathlib.Path.home()}/.config/cloudphoto/cloudphotorc", "w")
+    init_file.write("[DEFAULT]\n"+
+                    f"bucket = {bucket_name}\n" +
+                    f"aws_access_key_id = {aws_access_key_id}\n" +
+                    f"aws_secret_access_key = {aws_secret_access_key}\n" +
+                    "region = ru-central1\n" +
+                    "endpoint_url = https://storage.yandexcloud.net")
+    init_file.close()
+
+    session = boto3.session.Session()
+    s3 = session.client(
+        service_name='s3',
+        endpoint_url=config['DEFAULT']['endpoint_url'],
+        aws_access_key_id=config['DEFAULT']['aws_access_key_id'],
+        aws_secret_access_key=config['DEFAULT']['aws_secret_access_key'],
+        region_name=config['DEFAULT']['region']
+    )
+
+    try:
+        s3.list_buckets()
+    except:
+        print("Initialization error")
+        sys.exit()
+
+    try:
+        s3.create_bucket(Bucket=f'{bucket_name}')
+    except:
+        pass
+
+    print("Successful initialization")
+
+
+if __name__ == '__main__':
+
+    if len(sys.argv) == 1:
+        print('usage: cloudphoto COMMAND [OPTION]...')
+    elif sys.argv[1] == "-h" or sys.argv[1] == "--help":
+        print('usage: cloudphoto COMMAND [OPTION]...')
+    elif sys.argv[1] == "upload":
+        upload()
+    elif sys.argv[1] == "download":
+        download()
+    elif sys.argv[1] == "list":
+        list()
+    elif sys.argv[1] == "delete":
+        delete()
+    elif sys.argv[1] == "mksite":
+        mksite()
+    elif sys.argv[1] == "init":
+        init()
+    else:
+        print('error')
