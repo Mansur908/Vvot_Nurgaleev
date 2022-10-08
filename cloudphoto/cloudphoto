@@ -247,9 +247,21 @@ def init():
 if __name__ == '__main__':
 
     if len(sys.argv) == 1:
-        print('usage: cloudphoto COMMAND [OPTION]...')
+        print("usage: cloudphoto COMMAND [OPTION]...\n\n"+
+              "COMMANDS: upload\n"+
+              "          download\n"+
+              "          list\n"+
+              "          delete\n"+
+              "          mksite\n"+
+              "          init\n")
     elif sys.argv[1] == "-h" or sys.argv[1] == "--help":
-        print('usage: cloudphoto COMMAND [OPTION]...')
+        print("usage: cloudphoto COMMAND [OPTION]...\n\n"+
+              "COMMANDS: upload\n"+
+              "          download\n"+
+              "          list\n"+
+              "          delete\n"+
+              "          mksite\n"+
+              "          init\n")
     elif sys.argv[1] == "upload":
         upload()
     elif sys.argv[1] == "download":
