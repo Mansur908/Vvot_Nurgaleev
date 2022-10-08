@@ -9,6 +9,7 @@
 6) pip install -r ~/Vvot_Nurgaleev/cloudphoto/requirements.txt
 Выполните инициализацию:
 7) cloudphoto init
+
 Заполните запрашиваемые данные и программа будет доступна для использования.
 
 Доступные команды:
